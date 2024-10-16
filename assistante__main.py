@@ -1,10 +1,19 @@
 import time
 import speech_recognition as sr
 
+from threading import Thread
+
 from configure__main import Configuration
 
 from assistante_soundModule import Sound
 from assistante_commandDispatcher import commandDispatcher
+
+def listenTimer(stopFunc, getoldtime):
+    while getoldtime() is not None:
+        print(getoldtime())
+        if time.time() - getoldtime() > 15:
+            stopFunc()
+        break
 
 class Assistant:
 
@@ -19,11 +28,13 @@ class Assistant:
         self.duration = 2
 
         self.oldtime = None
+        self.timer = False
 
         self._import()
         self._init()
         
         self.speechR = sr.Recognizer()
+        self.audioData = None
 
     def _import(self) -> None:
         if Configuration._CONFIG()['settings']['voiceActive']:
@@ -148,34 +159,41 @@ class Assistant:
 
         self._stop_listen()
 
-    def _listen(self, source):
+    def _listen(self, audio):
+        try:
+            result = self.speechR.recognize_google(
+                audio,
+                language='ru_RU'
+                ).lower()
+            print(result)
+            if not self.listen:
+                self.__recognizer(result)
+            else:
+                if any(x in result for x in Configuration._STOPTRIGGERS()):
+                    self._stop_listen()
+                else: self._recognize(result)
+        except Exception as exc:
+            print(__name__, f"recognize ERROR\n{exc}")
+
+    def getOldTime(self) -> any:
+        return self.oldtime
+
+    def _listener(self):
+        self.__start__()
+        timerThread = Thread(target=listenTimer, args=(self._stop_listen, self.getOldTime), daemon=False)
         while Configuration._CONFIG()['settings']['ATactive']:
             if not self.blocker and not Configuration._PAUSE():
                 if Configuration._CONFIG()['settings']['loader']:
                     self._import()
                     Configuration.loaderOFF()
                 try:
-                    if self.oldtime is not None:
-                        if time.time() - self.oldtime > 15:
-                            self._stop_listen()
-                    audio = self.speechR.record(source, duration=self.duration)
+                    if self.timer is False and self.oldtime is not None:
+                        timerThread.start()
+                        self.timer = True
                 except Exception as exc: print(__name__, f"timer ERROR\n{exc}")
-                try:
-                    result = self.speechR.recognize_google(
-                        audio,
-                        language='ru_RU'
-                        ).lower()
-                    print(result)
-                    if not self.listen:
-                        self.__recognizer(result)
-                    else:
-                        if any(x in result for x in Configuration._STOPTRIGGERS()):
-                            self._stop_listen()
-                        else: self._recognize(result)
-                except Exception as exc:
-                    print(__name__, f"recognize ERROR\n{exc}")
-
-    def _listener(self):
-        self.__start__()
-        with sr.Microphone() as source: self._listen(source)
+                with sr.Microphone() as source:
+                    audio = self.speechR.adjust_for_ambient_noise(source)
+                    audio = self.speechR.listen(source)
+                self._listen(audio)
+        
         self.__close__()
